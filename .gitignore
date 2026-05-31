@@ -1,12 +1,12 @@
 # Python Virtual Environment
-backend/venv/
-backend/__pycache__/
+$t0ck$/backend/venv/
+$t0ck$/backend/__pycache__/
 **/__pycache__/
 *.pyc
 
 # Local Database & Environment Files
-backend/market.db
-backend/.env
+$t0ck$/backend/market.db
+$t0ck$/backend/.env
 .env
 
 # macOS System Files
