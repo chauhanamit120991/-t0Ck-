@@ -1,0 +1,13 @@
+# Python Virtual Environment
+backend/venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Local Database & Environment Files
+backend/market.db
+backend/.env
+.env
+
+# macOS System Files
+.DS_Store
