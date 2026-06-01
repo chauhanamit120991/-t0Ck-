@@ -3,6 +3,10 @@ import json
 import logging
 from pydantic import BaseModel, Field
 from typing import Tuple
+from dotenv import load_dotenv
+
+# Load environment variables from .env file in the same directory
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
