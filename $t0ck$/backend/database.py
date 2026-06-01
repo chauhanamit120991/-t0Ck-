@@ -355,6 +355,7 @@ SECTOR_MAP = {
     "MA": "Financial Services", "BAC": "Financial Services", "MS": "Financial Services",
     "MSTR": "Financial Services", "COIN": "Financial Services",
     "TSLA": "Consumer Cyclical", "HD": "Consumer Cyclical", "AMZN": "Consumer Cyclical",
+    "WMT": "Consumer Defensive",
     "T": "Communication Services", "VZ": "Communication Services",
     "XOM": "Energy", "CVX": "Energy", "SHEL": "Energy", "BP": "Energy",
     "SMR": "Energy", "OKLO": "Energy", "CEG": "Energy", "VST": "Energy",
@@ -441,15 +442,29 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
             opt_type = "Put"
 
     if opt_type == "Call":
-        strike = round(price * 1.05)
+        # Refined strike based on recommendation strength
+        if recommendation == "Strong Buy":
+            offset = 1.06  # 6% out of the money
+            premium_pct = 0.025  # Premium is cheaper further out of the money
+        else:
+            offset = 1.03  # 3% out of the money
+            premium_pct = 0.04  # Premium is more expensive closer to the money
+        strike = round(price * offset)
         if strike == round(price):
             strike += 1.0
-        premium = round(price * 0.035, 2)
+        premium = round(price * premium_pct, 2)
     elif opt_type == "Put":
-        strike = round(price * 0.95)
+        # Refined strike based on recommendation strength
+        if recommendation == "Strong Sell":
+            offset = 0.94  # 6% out of the money
+            premium_pct = 0.02  # Premium is cheaper further out of the money
+        else:
+            offset = 0.97  # 3% out of the money
+            premium_pct = 0.035  # Premium is more expensive closer to the money
+        strike = round(price * offset)
         if strike == round(price):
             strike -= 1.0
-        premium = round(price * 0.03, 2)
+        premium = round(price * premium_pct, 2)
     else:
         return {
             "type": "Hold",
@@ -472,7 +487,10 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
     if not ref_dt:
         ref_dt = datetime.now()
 
-    exp_dt = ref_dt + timedelta(days=30)
+    # Find the Friday of the week ~30 days out for standard monthly options
+    target_dt = ref_dt + timedelta(days=30)
+    days_to_friday = (4 - target_dt.weekday()) % 7
+    exp_dt = target_dt + timedelta(days=days_to_friday)
     expiration_str = exp_dt.strftime("%Y-%m-%d 16:00")
     amount = round(premium * 100, 2)
 

@@ -13,7 +13,8 @@ from database import (
     save_politician_trade, 
     get_active_politician_tickers,
     prune_old_data,
-    save_stock_analysis
+    save_stock_analysis,
+    get_sector_for_ticker
 )
 from gemini_client import analyze_sentiment
 
@@ -30,7 +31,11 @@ DEFAULT_TICKERS = [
     # Nuclear Energy & AI Power
     "SMR", "OKLO", "CEG", "VST",
     # Crypto & Finance
-    "MSTR", "COIN", "JPM", "BTC-USD", "ETH-USD"
+    "MSTR", "COIN", "JPM", "GS", "BAC", "BTC-USD", "ETH-USD",
+    # Healthcare & Biotech
+    "LLY", "UNH",
+    # Energy, Retail & Industrials
+    "XOM", "CVX", "WMT", "CAT"
 ]
 
 def get_tracked_tickers() -> list:
@@ -228,11 +233,12 @@ def get_ticker_trade_and_sentiment_stats(ticker: str) -> tuple:
         logger.error(f"Error fetching ticker database stats for {ticker}: {e}")
         return 0, 0, 0.0
 
-def compute_synthesis_signal(buy_count: int, sell_count: int, avg_news_sentiment: float, rsi: float, price: float, sma_50: float, sma_200: float, peg_ratio: float) -> str:
+def compute_synthesis_signal(buy_count: int, sell_count: int, avg_news_sentiment: float, rsi: float, price: float, sma_50: float, sma_200: float, peg_ratio: float, pe_ratio: float = None, ticker: str = None) -> str:
     """Computes a quantitative weighted synthesis recommendation signal."""
     # 1. Political score
     net_buys = buy_count - sell_count
-    political_score = 0.5 * net_buys
+    # Limit extreme outliers from single stocks
+    political_score = max(min(0.5 * net_buys, 2.0), -2.0)
     
     # 2. Sentiment score
     sentiment_score = 2.0 * avg_news_sentiment
@@ -240,34 +246,71 @@ def compute_synthesis_signal(buy_count: int, sell_count: int, avg_news_sentiment
     # 3. Technical score
     technical_score = 0.0
     if rsi is not None:
-        if rsi < 30:
+        if rsi < 25:
+            technical_score += 2.0  # Extremely oversold (highly bullish reversal potential)
+        elif rsi < 35:
             technical_score += 1.0  # Oversold (bullish)
-        elif rsi > 70:
+        elif rsi > 75:
+            technical_score -= 2.0  # Extremely overbought (highly bearish pullback potential)
+        elif rsi > 65:
             technical_score -= 1.0  # Overbought (bearish)
             
     if price and sma_50 and sma_200:
-        if price > sma_50 and sma_50 > sma_200:
-            technical_score += 1.0  # Bullish trend alignment
-        elif price < sma_50 and sma_50 < sma_200:
-            technical_score -= 1.0  # Bearish trend alignment
+        if sma_50 > sma_200:
+            # Bullish Golden Cross structural trend
+            technical_score += 0.5
+            if price > sma_50:
+                technical_score += 1.0  # Above 50 SMA (short-term uptrend)
+        else:
+            # Bearish Death Cross structural trend
+            technical_score -= 0.5
+            if price < sma_50:
+                technical_score -= 1.0  # Below 50 SMA (short-term downtrend)
             
-    # 4. Fundamental valuation score (PEG ratio)
+    # 4. Fundamental valuation score (PEG & P/E Ratios)
     fundamental_score = 0.0
     if peg_ratio is not None:
-        if 0 < peg_ratio < 1.0:
+        if 0.0 < peg_ratio < 1.0:
             fundamental_score += 1.5  # Undervalued relative to growth (bullish)
+        elif 1.0 <= peg_ratio < 1.5:
+            fundamental_score += 0.5  # Fairly valued relative to growth
         elif peg_ratio > 2.0:
-            fundamental_score -= 1.0  # Overvalued (bearish)
+            fundamental_score -= 1.5  # Overvalued relative to growth (bearish)
+            
+    if pe_ratio is not None and ticker:
+        sector = get_sector_for_ticker(ticker)
+        pe_benchmarks = {
+            "Technology": 30.0,
+            "Financial Services": 16.0,
+            "Energy": 18.0,
+            "Healthcare": 22.0,
+            "Industrials": 20.0,
+            "Consumer Cyclical": 22.0,
+            "Consumer Defensive": 18.0,
+            "Communication Services": 22.0,
+            "Real Estate": 20.0,
+            "Cryptocurrency": 35.0,
+            "Other": 20.0
+        }
+        benchmark = pe_benchmarks.get(sector, 20.0)
+        if pe_ratio <= 0.0:
+            pass
+        elif pe_ratio < benchmark * 0.7:
+            fundamental_score += 1.0  # Significantly undervalued relative to sector
+        elif pe_ratio < benchmark:
+            fundamental_score += 0.5  # Moderately undervalued relative to sector
+        elif pe_ratio > benchmark * 1.5:
+            fundamental_score -= 1.0  # Overvalued relative to sector
             
     total_score = political_score + sentiment_score + technical_score + fundamental_score
     
-    if total_score >= 1.5:
+    if total_score >= 1.75:
         return "Strong Buy"
-    elif total_score >= 0.5:
+    elif total_score >= 0.75:
         return "Buy"
-    elif total_score <= -1.5:
+    elif total_score <= -1.75:
         return "Strong Sell"
-    elif total_score <= -0.5:
+    elif total_score <= -0.75:
         return "Sell"
     else:
         return "Hold"
@@ -324,7 +367,9 @@ def run_update_cycle() -> dict:
                 price=price,
                 sma_50=sma_50,
                 sma_200=sma_200,
-                peg_ratio=peg_ratio
+                peg_ratio=peg_ratio,
+                pe_ratio=pe_ratio,
+                ticker=ticker
             )
             
             # Save analysis results to database
