@@ -56,9 +56,8 @@ def analyze_sentiment(headline: str, ticker: str) -> Tuple[float, str]:
         from google import genai
         from google.genai import types
 
-        # Initialize the Google GenAI client
-        # In google-genai, genai.Client() automatically picks up GEMINI_API_KEY from the environment
-        client = genai.Client()
+        # Initialize the Google GenAI client explicitly using the loaded API key
+        client = genai.Client(api_key=api_key)
 
         prompt = f"""
         Analyze the sentiment of the following stock news headline for the ticker: {ticker}.
