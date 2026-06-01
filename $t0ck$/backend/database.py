@@ -183,7 +183,7 @@ def get_all_signals(limit: int = 100) -> List[Dict[str, Any]]:
         cursor = conn.execute(
             """
             SELECT s.id, s.ticker, s.price, s.headline, s.sentiment_score, s.explanation, s.timestamp,
-                   a.recommendation
+                   a.recommendation, a.rsi, a.sma_50, a.sma_200, a.peg_ratio, a.pe_ratio, a.price as last_price
             FROM signals s
             LEFT JOIN stock_analysis a ON s.ticker = a.ticker
             ORDER BY s.timestamp DESC LIMIT ?
@@ -298,7 +298,8 @@ def get_recent_politician_trades(limit: int = 100, ticker: str = None, party: st
         SELECT t.id, t.filer_name, t.chamber, t.party, t.state, t.ticker, t.asset_name,
                t.transaction_date, t.filing_date, t.transaction_type, t.amount_range,
                t.amount_low, t.amount_high, t.doc_url,
-               a.recommendation, a.price as last_price
+               a.recommendation, a.price as last_price,
+               a.rsi, a.sma_50, a.sma_200, a.peg_ratio, a.pe_ratio
         FROM politician_trades t
         LEFT JOIN stock_analysis a ON t.ticker = a.ticker
         WHERE t.transaction_date >= ?

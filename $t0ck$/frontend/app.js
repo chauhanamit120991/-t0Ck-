@@ -70,10 +70,40 @@ const Icons = {
   )
 };
 
-function StockAnalysisDrawerContent({ stock, formatFloat, getSignalBadge, getOptionStrategyDrawerBlock }) {
+function StockAnalysisDrawerContent({ stock: initialStock, formatFloat, getSignalBadge, getOptionStrategyDrawerBlock }) {
   const chartContainerRef = React.useRef(null);
   const [chartLoading, setChartLoading] = React.useState(true);
   const [chartError, setChartError] = React.useState(null);
+  const [stock, setStock] = React.useState(initialStock);
+
+  React.useEffect(() => {
+    setStock(initialStock);
+  }, [initialStock]);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchAnalysisData = async () => {
+      try {
+        const res = await fetch(`/api/stock-analysis?ticker=${initialStock.ticker}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (isMounted && json.status === "success" && json.data) {
+            setStock(prev => ({
+              ...prev,
+              ...json.data,
+              last_price: prev.last_price || json.data.price
+            }));
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching stock analysis details:", err);
+      }
+    };
+    fetchAnalysisData();
+    return () => {
+      isMounted = false;
+    };
+  }, [initialStock.ticker]);
 
   React.useEffect(() => {
     let isMounted = true;

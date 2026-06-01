@@ -132,6 +132,24 @@ async def get_stock_chart(ticker: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch chart data.")
 
+@app.get("/api/stock-analysis")
+async def get_stock_analysis_detail(ticker: str):
+    """Retrieves the cached stock analysis (including RSI, SMA, etc.) for a specific ticker."""
+    import re
+    if not ticker or not isinstance(ticker, str) or not re.match(r"^[A-Za-z0-9\.\-^=]{1,20}$", ticker):
+        raise HTTPException(status_code=400, detail="Invalid ticker symbol.")
+    try:
+        from database import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.execute("SELECT * FROM stock_analysis WHERE ticker = ?", (ticker.upper().strip(),))
+            row = cursor.fetchone()
+            if row:
+                return {"status": "success", "data": dict(row)}
+            else:
+                return {"status": "not_found", "data": None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to fetch stock analysis.")
+
 @app.get("/api/market-trends/trending")
 async def get_trending_tickers():
     """Fetches trending stock tickers from Yahoo Finance and downloads their details."""
