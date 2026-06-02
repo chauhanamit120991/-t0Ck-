@@ -140,13 +140,16 @@ async def get_stock_analysis_detail(ticker: str):
         raise HTTPException(status_code=400, detail="Invalid ticker symbol.")
     try:
         from database import get_db_connection
-        with get_db_connection() as conn:
+        conn = get_db_connection()
+        try:
             cursor = conn.execute("SELECT * FROM stock_analysis WHERE ticker = ?", (ticker.upper().strip(),))
             row = cursor.fetchone()
             if row:
                 return {"status": "success", "data": dict(row)}
             else:
                 return {"status": "not_found", "data": None}
+        finally:
+            conn.close()
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch stock analysis.")
 

@@ -14,7 +14,8 @@ def get_db_connection():
 
 def init_db():
     """Initializes the database and creates necessary tables if they do not exist."""
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,8 +59,12 @@ def init_db():
             )
         """)
         conn.commit()
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+    finally:
+        conn.close()
     seed_mock_data()
-    # Prune old data on initialization to maintain strict 2-4 day limit (4 days max)
+    # Prune old data on initialization
     prune_old_data()
 
 def seed_mock_data():
@@ -77,78 +82,86 @@ def seed_mock_data():
         ("mock_6", "Nancy Pelosi", "senate", "D", "CA", "AAPL", "Apple Inc. Common Stock", date_1, date_1, "Sale (Full)", "$100,001 - $250,000", 100001, 250000, "https://disclosures-clerk.house.gov/"),
     ]
     
+    conn = get_db_connection()
     try:
-        with get_db_connection() as conn:
-            # Check if empty
-            cursor = conn.execute("SELECT COUNT(*) FROM politician_trades;")
-            count = cursor.fetchone()[0]
-            if count == 0:
-                conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO politician_trades (
-                        id, filer_name, chamber, party, state, ticker, asset_name,
-                        transaction_date, filing_date, transaction_type, amount_range,
-                        amount_low, amount_high, doc_url
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    mock_trades
-                )
-                conn.commit()
-                print("Mock politician trades seeded successfully.")
+        # Check if empty
+        cursor = conn.execute("SELECT COUNT(*) FROM politician_trades;")
+        count = cursor.fetchone()[0]
+        if count == 0:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO politician_trades (
+                    id, filer_name, chamber, party, state, ticker, asset_name,
+                    transaction_date, filing_date, transaction_type, amount_range,
+                    amount_low, amount_high, doc_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                mock_trades
+            )
+            conn.commit()
+            print("Mock politician trades seeded successfully.")
     except Exception as e:
         print(f"Error seeding mock data: {e}")
+    finally:
+        conn.close()
 
-def prune_old_data(days_limit: int = 5):
-    """Deletes politician trades, news signals, and cached analyses older than `days_limit` days relative to current time."""
-    threshold_datetime = datetime.now() - timedelta(days=days_limit)
-    threshold_date_str = threshold_datetime.strftime("%Y-%m-%d")
-    threshold_iso = threshold_datetime.isoformat()
+def prune_old_data(news_days_limit: int = 5, trades_days_limit: int = 60):
+    """Deletes politician trades older than trades_days_limit, and news/analyses older than news_days_limit."""
+    threshold_news_datetime = datetime.now() - timedelta(days=news_days_limit)
+    threshold_news_iso = threshold_news_datetime.isoformat()
     
+    threshold_trades_datetime = datetime.now() - timedelta(days=trades_days_limit)
+    threshold_trades_date_str = threshold_trades_datetime.strftime("%Y-%m-%d")
+    
+    conn = get_db_connection()
     try:
-        with get_db_connection() as conn:
-            cursor1 = conn.execute("DELETE FROM politician_trades WHERE transaction_date < ?", (threshold_date_str,))
-            cursor2 = conn.execute("DELETE FROM signals WHERE timestamp < ?", (threshold_iso,))
-            cursor3 = conn.execute("DELETE FROM stock_analysis WHERE last_updated < ?", (threshold_iso,))
-            conn.commit()
+        conn.execute("DELETE FROM politician_trades WHERE transaction_date < ?", (threshold_trades_date_str,))
+        conn.execute("DELETE FROM signals WHERE timestamp < ?", (threshold_news_iso,))
+        conn.execute("DELETE FROM stock_analysis WHERE last_updated < ?", (threshold_news_iso,))
+        conn.commit()
     except Exception as e:
         print(f"Error pruning database: {str(e)}")
+    finally:
+        conn.close()
 
 def save_stock_analysis(ticker: str, price: float, rsi: float, sma_50: float, sma_200: float, peg_ratio: float, pe_ratio: float, recommendation: str) -> bool:
     """Saves or updates technical and fundamental indicators for a ticker."""
     init_db()
+    conn = get_db_connection()
     try:
-        with get_db_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO stock_analysis (ticker, price, rsi, sma_50, sma_200, peg_ratio, pe_ratio, recommendation, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(ticker) DO UPDATE SET
-                    price=excluded.price,
-                    rsi=excluded.rsi,
-                    sma_50=excluded.sma_50,
-                    sma_200=excluded.sma_200,
-                    peg_ratio=excluded.peg_ratio,
-                    pe_ratio=excluded.pe_ratio,
-                    recommendation=excluded.recommendation,
-                    last_updated=excluded.last_updated
-                """,
-                (
-                    ticker.upper().strip(),
-                    price,
-                    rsi,
-                    sma_50,
-                    sma_200,
-                    peg_ratio,
-                    pe_ratio,
-                    recommendation,
-                    datetime.now().isoformat()
-                )
+        conn.execute(
+            """
+            INSERT INTO stock_analysis (ticker, price, rsi, sma_50, sma_200, peg_ratio, pe_ratio, recommendation, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ticker) DO UPDATE SET
+                price=excluded.price,
+                rsi=excluded.rsi,
+                sma_50=excluded.sma_50,
+                sma_200=excluded.sma_200,
+                peg_ratio=excluded.peg_ratio,
+                pe_ratio=excluded.pe_ratio,
+                recommendation=excluded.recommendation,
+                last_updated=excluded.last_updated
+            """,
+            (
+                ticker.upper().strip(),
+                price,
+                rsi,
+                sma_50,
+                sma_200,
+                peg_ratio,
+                pe_ratio,
+                recommendation,
+                datetime.now().isoformat()
             )
-            conn.commit()
-            return True
+        )
+        conn.commit()
+        return True
     except Exception as e:
         print(f"Error saving stock analysis for {ticker}: {str(e)}")
         return False
+    finally:
+        conn.close()
 
 def save_signal(ticker: str, price: float, headline: str, sentiment_score: float, explanation: str, timestamp: str) -> bool:
     """
@@ -156,17 +169,17 @@ def save_signal(ticker: str, price: float, headline: str, sentiment_score: float
     Returns True if saved successfully, False if it was a duplicate headline.
     """
     init_db()  # Ensure table exists
+    conn = get_db_connection()
     try:
-        with get_db_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO signals (ticker, price, headline, sentiment_score, explanation, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (ticker, price, headline, sentiment_score, explanation, timestamp)
-            )
-            conn.commit()
-            return True
+        conn.execute(
+            """
+            INSERT INTO signals (ticker, price, headline, sentiment_score, explanation, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (ticker, price, headline, sentiment_score, explanation, timestamp)
+        )
+        conn.commit()
+        return True
     except sqlite3.IntegrityError:
         # Expected if headline violates UNIQUE constraint
         return False
@@ -175,11 +188,14 @@ def save_signal(ticker: str, price: float, headline: str, sentiment_score: float
         # TODO(security): Log detailed error system-side in a production environment
         print(f"Error saving signal: {str(e)}")
         return False
+    finally:
+        conn.close()
 
 def get_all_signals(limit: int = 100) -> List[Dict[str, Any]]:
     """Retrieves all signals sorted by timestamp descending, joining the latest stock analysis recommendation."""
     init_db()
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cursor = conn.execute(
             """
             SELECT s.id, s.ticker, s.price, s.headline, s.sentiment_score, s.explanation, s.timestamp,
@@ -202,11 +218,14 @@ def get_all_signals(limit: int = 100) -> List[Dict[str, Any]]:
             )
             results.append(d)
         return results
+    finally:
+        conn.close()
 
 def get_stats() -> Dict[str, Any]:
     """Computes basic financial signals statistics."""
     init_db()
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         # Total counts and averages
         cursor = conn.execute("SELECT COUNT(*), AVG(sentiment_score) FROM signals")
         total_count, avg_sentiment = cursor.fetchone()
@@ -226,6 +245,8 @@ def get_stats() -> Dict[str, Any]:
             "avg_sentiment": avg_sentiment if avg_sentiment is not None else 0.0,
             "tickers": ticker_breakdown
         }
+    finally:
+        conn.close()
 
 def save_politician_trade(trade_data: dict) -> bool:
     """
@@ -234,53 +255,55 @@ def save_politician_trade(trade_data: dict) -> bool:
     """
     init_db()
     
-    # Restrict to last 5 days (not more than that)
+    # Restrict to last 60 days (not more than that) to align with delayed disclosure filings
     trade_date_str = trade_data.get("transaction_date")
     if trade_date_str:
         try:
             trade_date = datetime.strptime(trade_date_str, "%Y-%m-%d")
             # Clear time part for accurate date comparison
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            if trade_date < today - timedelta(days=5):
+            if trade_date < today - timedelta(days=60):
                 return False
         except Exception:
             pass
 
+    conn = get_db_connection()
     try:
-        with get_db_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO politician_trades (
-                    id, filer_name, chamber, party, state, ticker, asset_name,
-                    transaction_date, filing_date, transaction_type, amount_range,
-                    amount_low, amount_high, doc_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    trade_data.get("id"),
-                    trade_data.get("filer_name"),
-                    trade_data.get("chamber"),
-                    trade_data.get("party"),
-                    trade_data.get("state"),
-                    trade_data.get("ticker"),
-                    trade_data.get("asset_name"),
-                    trade_data.get("transaction_date"),
-                    trade_data.get("filing_date"),
-                    trade_data.get("transaction_type"),
-                    trade_data.get("amount_range_label"),
-                    trade_data.get("amount_range_low"),
-                    trade_data.get("amount_range_high"),
-                    trade_data.get("doc_url")
-                )
+        conn.execute(
+            """
+            INSERT INTO politician_trades (
+                id, filer_name, chamber, party, state, ticker, asset_name,
+                transaction_date, filing_date, transaction_type, amount_range,
+                amount_low, amount_high, doc_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trade_data.get("id"),
+                trade_data.get("filer_name"),
+                trade_data.get("chamber"),
+                trade_data.get("party"),
+                trade_data.get("state"),
+                trade_data.get("ticker"),
+                trade_data.get("asset_name"),
+                trade_data.get("transaction_date"),
+                trade_data.get("filing_date"),
+                trade_data.get("transaction_type"),
+                trade_data.get("amount_range_label"),
+                trade_data.get("amount_range_low"),
+                trade_data.get("amount_range_high"),
+                trade_data.get("doc_url")
             )
-            conn.commit()
-            return True
+        )
+        conn.commit()
+        return True
     except sqlite3.IntegrityError:
         return False
     except Exception as e:
         # TODO(security): Log detailed error system-side in a production environment
         print(f"Error saving politician trade: {str(e)}")
         return False
+    finally:
+        conn.close()
 
 PROMINENT_PATTERNS = [
     "%Pelosi%", "%Khanna%", "%McCaul%", "%Tuberville%", "%Gottheimer%", 
@@ -293,7 +316,7 @@ def get_recent_politician_trades(limit: int = 100, ticker: str = None, party: st
     """Retrieves recent politician trades, sorted by transaction_date descending, joining stock analysis recommendations."""
     init_db()
     
-    threshold_date_str = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+    threshold_date_str = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
     query = """
         SELECT t.id, t.filer_name, t.chamber, t.party, t.state, t.ticker, t.asset_name,
                t.transaction_date, t.filing_date, t.transaction_type, t.amount_range,
@@ -311,7 +334,7 @@ def get_recent_politician_trades(limit: int = 100, ticker: str = None, party: st
         like_clauses = " AND (" + " OR ".join(["t.filer_name LIKE ?" for _ in PROMINENT_PATTERNS]) + ")"
         query += like_clauses
         params.extend(PROMINENT_PATTERNS)
-
+ 
     # Input validation & sanitization check
     import re
     if ticker and isinstance(ticker, str) and re.match(r"^[A-Za-z0-9\.\-^=]{1,20}$", ticker):
@@ -333,20 +356,49 @@ def get_recent_politician_trades(limit: int = 100, ticker: str = None, party: st
         
     params.append(limit_val)
     
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cursor = conn.execute(query, params)
         results = []
         for row in cursor.fetchall():
             d = dict(row)
+            ticker_symbol = d.get("ticker")
+            price = d.get("last_price") or 0.0
+            
+            # Fallback to signals table price if last_price is None
+            if not price or price <= 0:
+                cursor_price = conn.execute("SELECT price FROM signals WHERE ticker = ? ORDER BY timestamp DESC LIMIT 1", (ticker_symbol,))
+                row_price = cursor_price.fetchone()
+                if row_price:
+                    price = row_price[0]
+            
+            # Synthesize option recommendation specifically for this trade
+            # Avoids recommending Call options for Sale transactions or vice-versa
+            tx_action = d.get("transaction_type") or ""
+            overall_rec = d.get("recommendation") or "Hold"
+            synthesized_rec = "Hold"
+            if "Purchase" in tx_action:
+                if overall_rec in ["Strong Buy", "Buy", "Hold"]:
+                    synthesized_rec = "Buy"  # Will lead to Call
+                else:
+                    synthesized_rec = "Hold"  # Conflict
+            elif "Sale" in tx_action:
+                if overall_rec in ["Strong Sell", "Sell", "Hold"]:
+                    synthesized_rec = "Sell"  # Will lead to Put
+                else:
+                    synthesized_rec = "Hold"  # Conflict
+            
             d["option_strategy"] = calculate_option_recommendation(
-                ticker=d.get("ticker"),
-                price=d.get("last_price") or 0.0,
-                recommendation=d.get("recommendation"),
+                ticker=ticker_symbol,
+                price=price,
+                recommendation=synthesized_rec,
                 sentiment_score=None,
                 ref_date_str=d.get("transaction_date")
             )
             results.append(d)
         return results
+    finally:
+        conn.close()
 
 SECTOR_MAP = {
     "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology", "AMD": "Technology",
@@ -485,8 +537,10 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
         except Exception:
             pass
             
-    if not ref_dt:
-        ref_dt = datetime.now()
+    # Reset reference date to now if it is in the past, to ensure expiration is in the future
+    today = datetime.now()
+    if not ref_dt or ref_dt < today:
+        ref_dt = today
 
     # Find the Friday of the week ~30 days out for standard monthly options
     target_dt = ref_dt + timedelta(days=30)
@@ -693,7 +747,7 @@ def get_top_politician_stocks(limit: int = 10, prominent_only: bool = True) -> L
     except (ValueError, TypeError):
         limit_val = 10
         
-    threshold_date_str = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+    threshold_date_str = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
     query = """
         SELECT t.ticker, COUNT(t.id) as trade_count, 
                SUM(CASE WHEN t.transaction_type = 'Purchase' THEN 1 ELSE 0 END) as buy_count,
@@ -727,7 +781,8 @@ def get_top_politician_stocks(limit: int = 10, prominent_only: bool = True) -> L
     """
     params.append(limit_val)
     
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cursor = conn.execute(query, params)
         res = []
         for row in cursor.fetchall():
@@ -745,6 +800,8 @@ def get_top_politician_stocks(limit: int = 10, prominent_only: bool = True) -> L
             )
             res.append(d)
         return res
+    finally:
+        conn.close()
 
 def get_active_politician_tickers(limit: int = 10) -> List[str]:
     """Retrieves the list of tickers that politicians have actively bought recently."""
@@ -755,7 +812,7 @@ def get_active_politician_tickers(limit: int = 10) -> List[str]:
     except (ValueError, TypeError):
         limit_val = 10
         
-    threshold_date_str = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+    threshold_date_str = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
     query = """
         SELECT ticker
         FROM politician_trades
@@ -764,6 +821,9 @@ def get_active_politician_tickers(limit: int = 10) -> List[str]:
         ORDER BY COUNT(*) DESC
         LIMIT ?
     """
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         cursor = conn.execute(query, (threshold_date_str, limit_val))
         return [row['ticker'] for row in cursor.fetchall()]
+    finally:
+        conn.close()

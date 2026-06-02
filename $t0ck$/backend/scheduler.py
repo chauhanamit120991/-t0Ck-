@@ -90,50 +90,52 @@ def fetch_and_process_news(ticker_symbol: str, current_price: float) -> int:
         return 0
 
     new_signals_count = 0
-    # Process up to 8 of the latest news items
-    for item in news_items[:8]:
-        try:
-            content = item.get("content", {})
-            headline = content.get("title", "").strip()
-            
-            if not headline:
-                continue
+    conn = get_db_connection()
+    try:
+        # Process up to 8 of the latest news items
+        for item in news_items[:8]:
+            try:
+                content = item.get("content", {})
+                headline = content.get("title", "").strip()
+                
+                if not headline:
+                    continue
 
-            # Standardize timestamp to ISO format
-            pub_date = content.get("pubDate") or content.get("displayTime")
-            if pub_date:
-                # Keep it as is or parse if needed. ISO format is best.
-                timestamp = pub_date
-            else:
-                timestamp = datetime.now(timezone.utc).isoformat()
+                # Standardize timestamp to ISO format
+                pub_date = content.get("pubDate") or content.get("displayTime")
+                if pub_date:
+                    # Keep it as is or parse if needed. ISO format is best.
+                    timestamp = pub_date
+                else:
+                    timestamp = datetime.now(timezone.utc).isoformat()
 
-            # Check if this headline already exists in database
-            # (Fast check using connection to avoid full query)
-            with get_db_connection() as conn:
+                # Check if this headline already exists in database
                 cursor = conn.execute("SELECT 1 FROM signals WHERE headline = ?", (headline,))
                 if cursor.fetchone():
                     # Already exists, skip
                     continue
 
-            # This is a new headline, process with Gemini Flash API
-            logger.info(f"Analyzing new headline for {ticker_symbol}: {headline[:50]}...")
-            sentiment, explanation = analyze_sentiment(headline, ticker_symbol)
-            
-            # Save to SQLite
-            saved = save_signal(
-                ticker=ticker_symbol,
-                price=current_price,
-                headline=headline,
-                sentiment_score=sentiment,
-                explanation=explanation,
-                timestamp=timestamp
-            )
-            if saved:
-                new_signals_count += 1
-                logger.info(f"Successfully stored signal for {ticker_symbol}: {sentiment}")
-        except Exception as e:
-            logger.error(f"Error processing news item: {e}")
-            continue
+                # This is a new headline, process with Gemini Flash API
+                logger.info(f"Analyzing new headline for {ticker_symbol}: {headline[:50]}...")
+                sentiment, explanation = analyze_sentiment(headline, ticker_symbol)
+                
+                # Save to SQLite
+                saved = save_signal(
+                    ticker=ticker_symbol,
+                    price=current_price,
+                    headline=headline,
+                    sentiment_score=sentiment,
+                    explanation=explanation,
+                    timestamp=timestamp
+                )
+                if saved:
+                    new_signals_count += 1
+                    logger.info(f"Successfully stored signal for {ticker_symbol}: {sentiment}")
+            except Exception as e:
+                logger.error(f"Error processing news item: {e}")
+                continue
+    finally:
+        conn.close()
             
     return new_signals_count
 
@@ -202,36 +204,38 @@ def calculate_rsi(prices_series: pd.Series, period: int = 14) -> float:
 
 def get_ticker_trade_and_sentiment_stats(ticker: str) -> tuple:
     """Retrieves buy_count, sell_count, and avg_sentiment from the database for a ticker."""
+    conn = get_db_connection()
     try:
-        with get_db_connection() as conn:
-            # 5-day threshold for politician trades
-            threshold_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
-            cursor = conn.execute(
-                """
-                SELECT 
-                    SUM(CASE WHEN transaction_type = 'Purchase' THEN 1 ELSE 0 END) as buy_count,
-                    SUM(CASE WHEN transaction_type LIKE 'Sale%' THEN 1 ELSE 0 END) as sell_count
-                FROM politician_trades
-                WHERE ticker = ? AND transaction_date >= ?
-                """,
-                (ticker, threshold_date)
-            )
-            row = cursor.fetchone()
-            buy_count = row[0] if row and row[0] is not None else 0
-            sell_count = row[1] if row and row[1] is not None else 0
-            
-            # Avg sentiment from signals
-            cursor = conn.execute(
-                "SELECT AVG(sentiment_score) FROM signals WHERE ticker = ?",
-                (ticker,)
-            )
-            row = cursor.fetchone()
-            avg_sentiment = row[0] if row and row[0] is not None else 0.0
-            
-            return buy_count, sell_count, avg_sentiment
+        # 60-day threshold for politician trades
+        threshold_date = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+        cursor = conn.execute(
+            """
+            SELECT 
+                SUM(CASE WHEN transaction_type = 'Purchase' THEN 1 ELSE 0 END) as buy_count,
+                SUM(CASE WHEN transaction_type LIKE 'Sale%' THEN 1 ELSE 0 END) as sell_count
+            FROM politician_trades
+            WHERE ticker = ? AND transaction_date >= ?
+            """,
+            (ticker, threshold_date)
+        )
+        row = cursor.fetchone()
+        buy_count = row[0] if row and row[0] is not None else 0
+        sell_count = row[1] if row and row[1] is not None else 0
+        
+        # Avg sentiment from signals
+        cursor = conn.execute(
+            "SELECT AVG(sentiment_score) FROM signals WHERE ticker = ?",
+            (ticker,)
+        )
+        row = cursor.fetchone()
+        avg_sentiment = row[0] if row and row[0] is not None else 0.0
+        
+        return buy_count, sell_count, avg_sentiment
     except Exception as e:
         logger.error(f"Error fetching ticker database stats for {ticker}: {e}")
         return 0, 0, 0.0
+    finally:
+        conn.close()
 
 def compute_synthesis_signal(buy_count: int, sell_count: int, avg_news_sentiment: float, rsi: float, price: float, sma_50: float, sma_200: float, peg_ratio: float, pe_ratio: float = None, ticker: str = None) -> str:
     """Computes a quantitative weighted synthesis recommendation signal."""
