@@ -539,6 +539,8 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
             
     # Reset reference date to now if it is in the past, to ensure expiration is in the future
     today = datetime.now()
+    if ref_dt:
+        ref_dt = ref_dt.replace(tzinfo=None)
     if not ref_dt or ref_dt < today:
         ref_dt = today
 
