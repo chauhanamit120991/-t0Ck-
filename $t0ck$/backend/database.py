@@ -118,6 +118,14 @@ def prune_old_data(news_days_limit: int = 5, trades_days_limit: int = 60):
         conn.execute("DELETE FROM politician_trades WHERE transaction_date < ?", (threshold_trades_date_str,))
         conn.execute("DELETE FROM signals WHERE timestamp < ?", (threshold_news_iso,))
         conn.execute("DELETE FROM stock_analysis WHERE last_updated < ?", (threshold_news_iso,))
+        
+        # Check if we have any real trades in the database (id not starting with 'mock')
+        cursor = conn.execute("SELECT COUNT(*) FROM politician_trades WHERE id NOT LIKE 'mock%'")
+        real_count = cursor.fetchone()[0]
+        if real_count > 0:
+            # We have real data available, so delete the mock trades
+            conn.execute("DELETE FROM politician_trades WHERE id LIKE 'mock%'")
+            
         conn.commit()
     except Exception as e:
         print(f"Error pruning database: {str(e)}")
