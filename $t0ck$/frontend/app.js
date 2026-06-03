@@ -685,7 +685,7 @@ function App() {
         <div className="glass-card metric-card buy-spotlight" style={{ borderLeft: '4px solid var(--success)', display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '160px' }}>
           <div className="metric-header" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: '0.5rem' }}>
             <span className="metric-title" style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
-              <Icons.TrendingUp size={16} /> Top Buy Spotlight (2-5 Days Analysis)
+              <Icons.TrendingUp size={16} /> Top Buy Spotlight (7 Days Analysis)
             </span>
             {topBuyStock && getSignalBadge(topBuyStock.signal)}
           </div>
@@ -717,7 +717,7 @@ function App() {
         <div className="glass-card metric-card sell-spotlight" style={{ borderLeft: '4px solid var(--danger)', display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '160px' }}>
           <div className="metric-header" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)', paddingBottom: '0.5rem' }}>
             <span className="metric-title" style={{ color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
-              <Icons.TrendingDown size={16} /> Top Sell Spotlight (2-5 Days Analysis)
+              <Icons.TrendingDown size={16} /> Top Sell Spotlight (7 Days Analysis)
             </span>
             {topSellStock && getSignalBadge(topSellStock.signal)}
           </div>

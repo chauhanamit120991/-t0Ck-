@@ -105,7 +105,7 @@ def seed_mock_data():
     finally:
         conn.close()
 
-def prune_old_data(news_days_limit: int = 5, trades_days_limit: int = 60):
+def prune_old_data(news_days_limit: int = 7, trades_days_limit: int = 60):
     """Deletes politician trades older than trades_days_limit, and news/analyses older than news_days_limit."""
     threshold_news_datetime = datetime.now() - timedelta(days=news_days_limit)
     threshold_news_iso = threshold_news_datetime.isoformat()
@@ -468,6 +468,34 @@ def get_investment_signal(buy_count: int, sell_count: int, avg_sentiment: float)
     else:
         return "Hold"
 
+def adjust_for_market_holidays(dt: datetime) -> datetime:
+    """Adjusts option expiration date if it lands on a weekend or a US stock market holiday."""
+    # US Market Holidays (Market closed on these dates)
+    # For 2026:
+    holidays = {
+        "2026-01-01",  # New Year's Day
+        "2026-01-19",  # MLK Day
+        "2026-02-16",  # Presidents' Day
+        "2026-04-03",  # Good Friday
+        "2026-05-25",  # Memorial Day
+        "2026-06-19",  # Juneteenth
+        "2026-07-03",  # Independence Day (Observed holiday, since July 4 is Saturday)
+        "2026-09-07",  # Labor Day
+        "2026-11-26",  # Thanksgiving Day
+        "2026-12-25",  # Christmas Day
+        # 2027:
+        "2027-01-01",  # New Year's Day
+    }
+    
+    # If the date is a holiday or weekend, move it backward to the previous business day
+    while True:
+        date_str = dt.strftime("%Y-%m-%d")
+        if date_str in holidays or dt.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            dt -= timedelta(days=1)
+        else:
+            break
+    return dt
+
 def calculate_option_recommendation(ticker: str, price: float, recommendation: str, sentiment_score: float = None, ref_date_str: str = None) -> dict:
     """
     Calculates option strategy recommendation based on stock price, overall recommendation, and optional sentiment.
@@ -556,6 +584,10 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
     target_dt = ref_dt + timedelta(days=30)
     days_to_friday = (4 - target_dt.weekday()) % 7
     exp_dt = target_dt + timedelta(days=days_to_friday)
+    
+    # Adjust for US Stock Market holidays and weekends (e.g. July 3rd observed holiday)
+    exp_dt = adjust_for_market_holidays(exp_dt)
+    
     expiration_str = exp_dt.strftime("%Y-%m-%d 16:00")
     amount = round(premium * 100, 2)
 
