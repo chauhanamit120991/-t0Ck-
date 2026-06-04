@@ -329,6 +329,42 @@ function App() {
   const [topGainers, setTopGainers] = useState([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
   
+  // On-demand Ticker Search State
+  const [searchTicker, setSearchTicker] = useState("");
+  const [searchResult, setSearchResult] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+
+  // Handle On-demand Ticker Search
+  const handleTickerSearch = async (e, tickerStr = null) => {
+    if (e) e.preventDefault();
+    const query = (tickerStr || searchTicker).toUpperCase().trim();
+    if (!query) return;
+    
+    setSearchLoading(true);
+    setSearchError("");
+    setSearchResult(null);
+    
+    try {
+      const res = await fetch(`/api/stock-analysis?ticker=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.status === "success" && json.data) {
+          setSearchResult(json.data);
+        } else {
+          setSearchError(`Ticker "${query}" not found or has no available data.`);
+        }
+      } else {
+        setSearchError("Failed to fetch ticker intelligence. Please try again.");
+      }
+    } catch (err) {
+      console.error("Search error:", err);
+      setSearchError("Network error. Please check your connection.");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+  
   // Filters State for Signals
   const [searchQuery, setSearchQuery] = useState("");
   const [tickerFilter, setTickerFilter] = useState("ALL");
@@ -745,6 +781,264 @@ function App() {
           )}
         </div>
 
+      </section>
+
+      {/* On-Demand Ticker Intelligence Search Panel */}
+      <section className="glass-card search-box-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: '-0.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+            <Icons.Search size={18} className="trend-up" /> Real-time Ticker Intelligence
+          </h3>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
+            Search any stock ticker symbol (e.g. AMD, MSFT, AMZN, NFLX, JPM) to compute real-time indicators, option strategies, and news sentiment.
+          </p>
+        </div>
+
+        <form onSubmit={(e) => handleTickerSearch(e)} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div className="search-wrapper" style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+            <input 
+              type="text" 
+              className="search-input" 
+              placeholder="Enter ticker symbol (e.g. AMD)..." 
+              value={searchTicker}
+              onChange={(e) => setSearchTicker(e.target.value)}
+              style={{ textTransform: 'uppercase', width: '100%', paddingLeft: '2.5rem' }}
+            />
+            <Icons.Search className="search-icon-svg" size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+          </div>
+          <button 
+            type="submit" 
+            className="btn btn-primary"
+            disabled={searchLoading || !searchTicker.trim()}
+            style={{ minWidth: '120px', justifyContent: 'center' }}
+          >
+            {searchLoading ? <div className="loading-spinner" style={{ width: '14px', height: '14px', borderTopColor: '#ffffff', margin: 0 }}></div> : "Search"}
+          </button>
+        </form>
+
+        {/* Quick Ticker Tags */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          <span>Popular Lookups:</span>
+          {["AMD", "MSFT", "AMZN", "NFLX", "JPM", "COIN"].map(t => (
+            <button 
+              key={t}
+              className="badge"
+              onClick={(e) => {
+                setSearchTicker(t);
+                handleTickerSearch(e, t);
+              }}
+              style={{ 
+                background: 'rgba(255, 255, 255, 0.03)', 
+                border: '1px solid rgba(255, 255, 255, 0.05)', 
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                transition: 'var(--transition-smooth)'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.borderColor = 'var(--primary)';
+                e.target.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+                e.target.style.color = 'var(--text-secondary)';
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {searchError && (
+          <div className="sentiment-pill negative" style={{ padding: '0.65rem 1rem', borderRadius: '8px', borderLeft: '3px solid var(--danger)', background: 'rgba(244, 63, 94, 0.05)', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center', width: 'fit-content' }}>
+            <span>⚠️</span> {searchError}
+          </div>
+        )}
+
+        {searchResult && (
+          <div className="ticker-search-details" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            
+            {/* Header info */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '1.8rem', fontWeight: '800', fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
+                    {searchResult.ticker}
+                  </span>
+                  <span className="badge badge-aapl" style={{ fontSize: '0.8rem', textTransform: 'capitalize' }}>
+                    {searchResult.sector}
+                  </span>
+                  {getSignalBadge(searchResult.signal)}
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem', marginBottom: 0 }}>
+                  Last Updated: {formatTimestamp(searchResult.last_updated)}
+                </p>
+              </div>
+
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '1.6rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-sans)' }}>
+                  ${formatFloat(searchResult.price)}
+                </span>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>Real-time Quote</p>
+              </div>
+            </div>
+
+            {/* Visual Speedometer Scale for Opportunity */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase' }}>
+                <span>Strong Sell</span>
+                <span>Sell</span>
+                <span>Hold</span>
+                <span>Buy</span>
+                <span>Strong Buy</span>
+              </div>
+              <div style={{ height: '6px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '999px', position: 'relative' }}>
+                <div 
+                  style={{ 
+                    position: 'absolute', 
+                    top: '-4px', 
+                    left: searchResult.signal === "Strong Buy" ? '90%' : searchResult.signal === "Buy" ? '70%' : searchResult.signal === "Hold" ? '50%' : searchResult.signal === "Sell" ? '30%' : '10%',
+                    width: '14px', 
+                    height: '14px', 
+                    background: searchResult.signal.includes("Buy") ? 'var(--success)' : searchResult.signal.includes("Sell") ? 'var(--danger)' : 'var(--neutral)', 
+                    borderRadius: '50%', 
+                    boxShadow: `0 0 10px ${searchResult.signal.includes("Buy") ? 'var(--success)' : searchResult.signal.includes("Sell") ? 'var(--danger)' : 'var(--neutral)'}`,
+                    transition: 'left 0.5s ease-in-out'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Visual Sentiment Meter */}
+            <div style={{ background: 'rgba(255, 255, 255, 0.01)', border: '1px solid rgba(255, 255, 255, 0.03)', padding: '1rem', borderRadius: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>News Sentiment Indicator</span>
+                <strong style={{ fontSize: '0.85rem', margin: 0 }} className={searchResult.avg_news_sentiment > 0.15 ? "trend-up" : searchResult.avg_news_sentiment < -0.15 ? "trend-down" : "trend-neutral"}>
+                  {searchResult.avg_news_sentiment > 0 ? "+" : ""}{formatFloat(searchResult.avg_news_sentiment)}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--danger)', width: '40px', textAlign: 'left' }}>Bearish</span>
+                <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', position: 'relative', overflow: 'hidden' }}>
+                  <div 
+                    style={{ 
+                      position: 'absolute', 
+                      height: '100%', 
+                      background: searchResult.avg_news_sentiment > 0 ? 'var(--success)' : 'var(--danger)', 
+                      left: '50%',
+                      width: `${Math.min(Math.abs(searchResult.avg_news_sentiment) * 50, 50)}%`,
+                      transform: searchResult.avg_news_sentiment < 0 ? 'translateX(-100%)' : 'none',
+                      transition: 'width 0.5s ease-in-out'
+                    }}
+                  />
+                  <div style={{ position: 'absolute', left: '50%', top: 0, width: '2px', height: '100%', background: 'rgba(255,255,255,0.2)' }} />
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--success)', width: '40px', textAlign: 'right' }}>Bullish</span>
+              </div>
+            </div>
+
+            {/* Scorecard and metrics grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+              
+              {/* Technical Indicator Card */}
+              <div className="indicator-card" style={{ margin: 0 }}>
+                <h4 style={{ margin: '0 0 0.75rem 0' }}>Technical Momentum</h4>
+                <div className="indicator-row">
+                  <span>RSI (14):</span>
+                  <strong className={searchResult.rsi < 30 ? "trend-up" : searchResult.rsi > 70 ? "trend-down" : "trend-neutral"}>
+                    {searchResult.rsi !== null ? formatFloat(searchResult.rsi, 1) : "N/A"}
+                  </strong>
+                </div>
+                <div className="indicator-row">
+                  <span>50-Day SMA:</span>
+                  <strong>{searchResult.sma_50 !== null ? `$${formatFloat(searchResult.sma_50)}` : "N/A"}</strong>
+                </div>
+                <div className="indicator-row">
+                  <span>200-Day SMA:</span>
+                  <strong>{searchResult.sma_200 !== null ? `$${formatFloat(searchResult.sma_200)}` : "N/A"}</strong>
+                </div>
+                <div className="indicator-row" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.35rem', marginTop: '0.35rem' }}>
+                  <span>Short Term:</span>
+                  <strong className={searchResult.short_term_signal.includes("Buy") ? "trend-up" : searchResult.short_term_signal.includes("Sell") ? "trend-down" : "trend-neutral"}>
+                    {searchResult.short_term_signal}
+                  </strong>
+                </div>
+              </div>
+
+              {/* Fundamental Valuation Card */}
+              <div className="indicator-card" style={{ margin: 0 }}>
+                <h4 style={{ margin: '0 0 0.75rem 0' }}>Fundamental Ratios</h4>
+                <div className="indicator-row">
+                  <span>PEG Ratio:</span>
+                  <strong className={searchResult.peg_ratio > 0 && searchResult.peg_ratio < 1.0 ? "trend-up" : "trend-neutral"}>
+                    {searchResult.peg_ratio !== null ? formatFloat(searchResult.peg_ratio) : "N/A"}
+                  </strong>
+                </div>
+                <div className="indicator-row">
+                  <span>P/E Ratio:</span>
+                  <strong>{searchResult.pe_ratio !== null ? formatFloat(searchResult.pe_ratio, 1) : "N/A"}</strong>
+                </div>
+                <div className="indicator-row">
+                  <span>Politician Buy/Sell:</span>
+                  <strong style={{ fontSize: '0.85rem' }}>
+                    <span className="tx-buy">{searchResult.buy_count}</span> / <span className="tx-sell">{searchResult.sell_count}</span>
+                  </strong>
+                </div>
+                <div className="indicator-row" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.35rem', marginTop: '0.35rem' }}>
+                  <span>Long Term:</span>
+                  <strong className={searchResult.long_term_signal.includes("Buy") ? "trend-up" : searchResult.long_term_signal.includes("Sell") ? "trend-down" : "trend-neutral"}>
+                    {searchResult.long_term_signal}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Catalyst & Strategy Explanation */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '0.85rem 1rem', borderRadius: '10px' }}>
+                <p style={{ marginBottom: '0.35rem', marginTop: 0 }}>
+                  <strong>Short-Term Logic:</strong> {searchResult.short_term_reason}
+                </p>
+                <p style={{ margin: 0 }}>
+                  <strong>Long-Term Value Logic:</strong> {searchResult.long_term_reason}
+                </p>
+              </div>
+            </div>
+
+            {/* Option Strategy recommendation panel */}
+            {searchResult.option_strategy && searchResult.option_strategy.type !== "N/A" && (
+              <div style={{ background: 'rgba(99, 102, 241, 0.02)', borderRadius: '12px', border: '1px solid rgba(99, 102, 241, 0.08)' }}>
+                {getOptionStrategyDrawerBlock(searchResult.option_strategy)}
+                {/* Explain Option Logic tooltip style text */}
+                <div style={{ padding: '0 1.25rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  💡 <strong>Contract Strategy:</strong> Expiration is scheduled for monthly standard options ~30 days out ({searchResult.option_strategy.expiration.split(" ")[0]}), automatically adjusted to land on the nearest active US market trading day (shifting backwards if falling on a weekend or public holiday).
+                </div>
+              </div>
+            )}
+
+            {/* CTA Buttons */}
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem' }}>
+              <button 
+                className="btn btn-primary"
+                onClick={() => setSelectedAnalysisStock(searchResult)}
+                style={{ flex: 1, justifyContent: 'center' }}
+              >
+                <Icons.Activity size={16} /> View Interactive Candle Chart
+              </button>
+              <button 
+                className="btn btn-secondary"
+                onClick={() => {
+                  setTickerFilter(searchResult.ticker);
+                  setActiveTab("sentiment");
+                }}
+                style={{ justifyContent: 'center' }}
+                title="Go to Sentiment Feed"
+              >
+                Go to News Feed
+              </button>
+            </div>
+
+          </div>
+        )}
       </section>
 
       {/* Tabs Navigation */}

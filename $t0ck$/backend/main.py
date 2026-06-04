@@ -134,24 +134,76 @@ async def get_stock_chart(ticker: str):
 
 @app.get("/api/stock-analysis")
 async def get_stock_analysis_detail(ticker: str):
-    """Retrieves the cached stock analysis (including RSI, SMA, etc.) for a specific ticker."""
+    """Retrieves the cached stock analysis (including RSI, SMA, etc.) for a specific ticker, fallback to on-demand calculation if not cached."""
     import re
     if not ticker or not isinstance(ticker, str) or not re.match(r"^[A-Za-z0-9\.\-^=]{1,20}$", ticker):
         raise HTTPException(status_code=400, detail="Invalid ticker symbol.")
     try:
-        from database import get_db_connection
+        ticker_upper = ticker.upper().strip()
+        from database import get_db_connection, calculate_option_recommendation, get_sector_for_ticker, calculate_long_short_signals
+        
         conn = get_db_connection()
+        data = None
         try:
-            cursor = conn.execute("SELECT * FROM stock_analysis WHERE ticker = ?", (ticker.upper().strip(),))
+            cursor = conn.execute("SELECT * FROM stock_analysis WHERE ticker = ?", (ticker_upper,))
             row = cursor.fetchone()
             if row:
-                return {"status": "success", "data": dict(row)}
-            else:
-                return {"status": "not_found", "data": None}
+                data = dict(row)
         finally:
             conn.close()
+            
+        if not data:
+            from scheduler import analyze_ticker_on_demand
+            data = analyze_ticker_on_demand(ticker_upper)
+            
+        if data:
+            # Enrich with trade stats and option strategy
+            from scheduler import get_ticker_trade_and_sentiment_stats
+            buy_count, sell_count, avg_sentiment = get_ticker_trade_and_sentiment_stats(ticker_upper)
+            
+            # Fetch average transaction bounds if trade exists
+            avg_amount_low = 0.0
+            avg_amount_high = 0.0
+            conn = get_db_connection()
+            try:
+                cursor_amt = conn.execute(
+                    "SELECT AVG(amount_low), AVG(amount_high) FROM politician_trades WHERE ticker = ?",
+                    (ticker_upper,)
+                )
+                row_amt = cursor_amt.fetchone()
+                if row_amt:
+                    avg_amount_low = row_amt[0] if row_amt[0] is not None else 0.0
+                    avg_amount_high = row_amt[1] if row_amt[1] is not None else 0.0
+            finally:
+                conn.close()
+                
+            data["buy_count"] = buy_count
+            data["sell_count"] = sell_count
+            data["avg_news_sentiment"] = avg_sentiment
+            data["avg_amount_low"] = avg_amount_low
+            data["avg_amount_high"] = avg_amount_high
+            data["sector"] = get_sector_for_ticker(ticker_upper)
+            
+            # Align key names to match expected top stocks / signals UI payload format
+            data["last_price"] = data.get("price")
+            data["signal"] = data.get("recommendation")
+            
+            # Compute long/short term recommendation breakdown details
+            data = calculate_long_short_signals(data)
+            
+            # Option recommendation strategy contract
+            data["option_strategy"] = calculate_option_recommendation(
+                ticker=ticker_upper,
+                price=data.get("price") or 0.0,
+                recommendation=data.get("recommendation") or "Hold",
+                sentiment_score=avg_sentiment,
+                ref_date_str=None
+            )
+            return {"status": "success", "data": data}
+        else:
+            return {"status": "not_found", "data": None}
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to fetch stock analysis.")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch stock analysis: {str(e)}")
 
 @app.get("/api/market-trends/trending")
 async def get_trending_tickers():

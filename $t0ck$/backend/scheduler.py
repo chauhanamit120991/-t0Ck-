@@ -407,6 +407,116 @@ def run_update_cycle() -> dict:
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
+def analyze_ticker_on_demand(ticker_symbol: str) -> dict:
+    """
+    Fetches the stock price, runs news/sentiment parsing,
+    calculates RSI/SMAs/PEG/PE, computes synthesis signal,
+    caches it in stock_analysis, and returns the analysis data.
+    """
+    ticker_symbol = ticker_symbol.upper().strip()
+    t = yf.Ticker(ticker_symbol)
+    
+    price = None
+    try:
+        price = t.fast_info.get('lastPrice', None)
+        if price is not None:
+            price = float(price)
+    except Exception:
+        pass
+        
+    hist = None
+    try:
+        hist = t.history(period="1y")
+    except Exception as e:
+        logger.error(f"Failed to fetch history for on-demand ticker {ticker_symbol}: {e}")
+        
+    if (price is None or price <= 0) and (hist is None or hist.empty):
+        return None
+        
+    if price is None or price <= 0:
+        if not hist.empty:
+            price = float(hist['Close'].iloc[-1])
+        else:
+            price = 100.0
+            
+    # Fetch news to populate signals
+    try:
+        fetch_and_process_news(ticker_symbol, price)
+    except Exception as e:
+        logger.error(f"Failed to fetch news for on-demand ticker {ticker_symbol}: {e}")
+        
+    rsi = None
+    sma_50 = None
+    sma_200 = None
+    
+    if hist is not None and not hist.empty and len(hist) >= 50:
+        close_prices = hist['Close']
+        rsi = calculate_rsi(close_prices)
+        sma_50 = float(close_prices.rolling(window=50).mean().iloc[-1])
+        if len(hist) >= 200:
+            sma_200 = float(close_prices.rolling(window=200).mean().iloc[-1])
+            
+    peg_ratio = None
+    pe_ratio = None
+    try:
+        info = t.info
+        peg_ratio = info.get("pegRatio")
+        pe_ratio = info.get("trailingPE")
+        if peg_ratio is not None:
+            peg_ratio = float(peg_ratio)
+        if pe_ratio is not None:
+            pe_ratio = float(pe_ratio)
+    except Exception as e:
+        logger.error(f"Failed to fetch fundamental info for on-demand ticker {ticker_symbol}: {e}")
+        
+    buy_count, sell_count, avg_sentiment = get_ticker_trade_and_sentiment_stats(ticker_symbol)
+    
+    recommendation = compute_synthesis_signal(
+        buy_count=buy_count,
+        sell_count=sell_count,
+        avg_news_sentiment=avg_sentiment,
+        rsi=rsi,
+        price=price,
+        sma_50=sma_50,
+        sma_200=sma_200,
+        peg_ratio=peg_ratio,
+        pe_ratio=pe_ratio,
+        ticker=ticker_symbol
+    )
+    
+    save_stock_analysis(
+        ticker=ticker_symbol,
+        price=price,
+        rsi=rsi,
+        sma_50=sma_50,
+        sma_200=sma_200,
+        peg_ratio=peg_ratio,
+        pe_ratio=pe_ratio,
+        recommendation=recommendation
+    )
+    
+    # Read back from database to get correct structure
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute("SELECT * FROM stock_analysis WHERE ticker = ?", (ticker_symbol,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    finally:
+        conn.close()
+        
+    return {
+        "ticker": ticker_symbol,
+        "price": price,
+        "rsi": rsi,
+        "sma_50": sma_50,
+        "sma_200": sma_200,
+        "peg_ratio": peg_ratio,
+        "pe_ratio": pe_ratio,
+        "recommendation": recommendation,
+        "last_updated": datetime.now().isoformat()
+    }
+
 class BackgroundScheduler:
     """Manages the background loop running every 10 minutes and updating politician trades."""
     def __init__(self, interval_seconds: int = 600):
