@@ -294,6 +294,104 @@ async def get_top_gainers():
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch top gainers.")
 
+@app.get("/api/market-vix-analysis")
+async def get_market_vix_analysis():
+    """Fetches VIX and S&P 500 data, performs market risk assessment, and computes drawdown boundaries."""
+    try:
+        import yfinance as yf
+        import math
+        from datetime import datetime
+        
+        # 1. Fetch VIX data
+        vix = yf.Ticker("^VIX")
+        vix_hist = vix.history(period="30d")
+        if vix_hist.empty:
+            raise HTTPException(status_code=404, detail="Failed to fetch VIX historical data")
+            
+        current_vix = float(vix_hist["Close"].iloc[-1])
+        prev_vix = float(vix_hist["Close"].iloc[-2])
+        vix_change = current_vix - prev_vix
+        vix_change_pct = (vix_change / prev_vix * 100) if prev_vix else 0.0
+        
+        # Compute VIX 20-day SMA
+        vix_sma_20 = float(vix_hist["Close"].tail(20).mean())
+        
+        # 2. Fetch S&P 500 data
+        sp500 = yf.Ticker("^GSPC")
+        sp500_hist = sp500.history(period="2d")
+        current_sp = 0.0
+        sp_change = 0.0
+        sp_change_pct = 0.0
+        if not sp500_hist.empty:
+            current_sp = float(sp500_hist["Close"].iloc[-1])
+            if len(sp500_hist) >= 2:
+                prev_sp = float(sp500_hist["Close"].iloc[-2])
+                sp_change = current_sp - prev_sp
+                sp_change_pct = (sp_change / prev_sp * 100) if prev_sp else 0.0
+                
+        # 3. Perform Market Risk Assessment
+        # Divide by sqrt(12) to calculate expected 30-day range
+        sqrt_12 = math.sqrt(12.0)
+        expected_low_pct_1sd = - (current_vix / sqrt_12)
+        expected_low_pct_2sd = - (current_vix * 2.0 / sqrt_12)
+        
+        # Determine Fear Classification
+        if current_vix < 12.0:
+            fear_level = "Extreme Complacency"
+            color_theme = "cyan"
+            fear_desc = "VIX is extremely low. The market is highly complacent, which historically can precede local S&P 500 peaks."
+        elif current_vix < 20.0:
+            fear_level = "Low to Moderate Fear"
+            color_theme = "emerald"
+            fear_desc = "VIX is within normal historical ranges. Market conditions are stable, supportive of standard long-term trend."
+        elif current_vix < 30.0:
+            fear_level = "Elevated Fear"
+            color_theme = "amber"
+            fear_desc = "VIX is elevated. Market uncertainty is high, suggesting potential short-term corrections or volatility spikes."
+        else:
+            fear_level = "Panic & Capitulation"
+            color_theme = "rose"
+            fear_desc = "VIX is in extreme panic territory. Heavy downside sell-offs are occurring. Historically, this panic represents long-term capitulation buying opportunities."
+            
+        # Determine Market Direction/Trend Sentiment
+        if current_vix > vix_sma_20:
+            if current_vix > 20.0:
+                market_bias = "Risk-Off / Short-Term Bearish"
+                bias_desc = "VIX is rising above its 20-day average and exceeds the threshold of 20, indicating increasing market hedging and short-term downside bias."
+            else:
+                market_bias = "Caution / Rising Volatility"
+                bias_desc = "VIX is low but starting to climb above its 20-day trend. Keep an eye on potential volatility breakouts."
+        else:
+            if current_vix > 20.0:
+                market_bias = "Elevated Risk / Consolidating"
+                bias_desc = "VIX remains above 20 but is trending lower relative to its 20-day SMA, indicating potential market stabilization."
+            else:
+                market_bias = "Risk-On / Strong Bullish Trend"
+                bias_desc = "VIX is low and trading below its 20-day average. Implied volatility is shrinking, supporting a stable market uptrend."
+                
+        return {
+            "status": "success",
+            "data": {
+                "vix_price": current_vix,
+                "vix_change": vix_change,
+                "vix_change_pct": vix_change_pct,
+                "vix_sma_20": vix_sma_20,
+                "sp500_price": current_sp,
+                "sp500_change": sp_change,
+                "sp500_change_pct": sp_change_pct,
+                "expected_low_pct_1sd": expected_low_pct_1sd,
+                "expected_low_pct_2sd": expected_low_pct_2sd,
+                "fear_level": fear_level,
+                "color_theme": color_theme,
+                "fear_desc": fear_desc,
+                "market_bias": market_bias,
+                "bias_desc": bias_desc,
+                "last_updated": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch market VIX analysis: {str(e)}")
+
 @app.get("/api/health")
 async def health_check():
     """Simple API health check endpoint."""

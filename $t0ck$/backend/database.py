@@ -530,6 +530,20 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
         else:
             opt_type = "Put"
 
+    # Determine the strike price interval based on standard exchange increments
+    if price < 10.0:
+        interval = 0.50
+    elif price < 50.0:
+        interval = 1.00
+    elif price < 100.0:
+        interval = 2.50
+    elif price < 500.0:
+        interval = 5.00
+    elif price < 1000.0:
+        interval = 10.00
+    else:
+        interval = 50.00
+
     if opt_type == "Call":
         # Refined strike based on recommendation strength
         if recommendation == "Strong Buy":
@@ -538,9 +552,11 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
         else:
             offset = 1.03  # 3% out of the money
             premium_pct = 0.04  # Premium is more expensive closer to the money
-        strike = round(price * offset)
-        if strike == round(price):
-            strike += 1.0
+        raw_strike = price * offset
+        strike = round(raw_strike / interval) * interval
+        # Ensure it remains out of the money (at least 1 interval above underlying price)
+        if strike <= price:
+            strike += interval
         premium = round(price * premium_pct, 2)
     elif opt_type == "Put":
         # Refined strike based on recommendation strength
@@ -550,9 +566,11 @@ def calculate_option_recommendation(ticker: str, price: float, recommendation: s
         else:
             offset = 0.97  # 3% out of the money
             premium_pct = 0.035  # Premium is more expensive closer to the money
-        strike = round(price * offset)
-        if strike == round(price):
-            strike -= 1.0
+        raw_strike = price * offset
+        strike = round(raw_strike / interval) * interval
+        # Ensure it remains out of the money (at least 1 interval below underlying price)
+        if strike >= price:
+            strike -= interval
         premium = round(price * premium_pct, 2)
     else:
         return {

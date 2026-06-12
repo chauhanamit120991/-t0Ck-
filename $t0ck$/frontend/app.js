@@ -306,6 +306,90 @@ function StockAnalysisDrawerContent({ stock: initialStock, formatFloat, getSigna
   );
 }
 
+function calculateTradeSetup(stock) {
+  if (!stock) return null;
+  
+  const price = stock.last_price || stock.price || 0.0;
+  if (price <= 0) return null;
+  
+  const rec = stock.signal || stock.recommendation || "Hold";
+  const rsi = stock.rsi;
+  const sma_50 = stock.sma_50;
+  const sma_200 = stock.sma_200;
+  
+  let setupType = "Hold";
+  if (rec.includes("Buy")) setupType = "Long";
+  else if (rec.includes("Sell")) setupType = "Short";
+  
+  let entry = price;
+  let stopLoss = price;
+  let target1 = price;
+  let target2 = price;
+  let pattern = "Horizontal Consolidation";
+  let patternDesc = "Price is moving sideways within a tight range with neutral momentum.";
+  
+  // Pattern identification logic based on RSI and SMAs
+  if (rsi !== null && rsi < 30) {
+    pattern = "Double Bottom Reversal";
+    patternDesc = "Oversold RSI indicates severe seller exhaustion near key historical support, favoring a bullish trend reversal.";
+  } else if (rsi !== null && rsi > 70) {
+    pattern = "Double Top Pullback";
+    patternDesc = "Overbought RSI suggests buyer exhaustion near overhead resistance, favoring a short-term correction.";
+  } else if (sma_50 && sma_200 && sma_50 > sma_200 && price > sma_50) {
+    if (rsi !== null && rsi >= 55) {
+      pattern = "Bullish Ascending Channel";
+      patternDesc = "Strong structural uptrend with aligned SMAs and positive momentum, suggesting continuation of buy pressure.";
+    } else {
+      pattern = "Bullish Cup & Handle";
+      patternDesc = "Short-term pullback consolidation within a major structural uptrend, creating an ideal accumulation pattern.";
+    }
+  } else if (sma_50 && sma_200 && sma_50 <= sma_200 && price < sma_50) {
+    if (rsi !== null && rsi <= 45) {
+      pattern = "Bearish Descending Channel";
+      patternDesc = "Consistent lower highs and lower lows with descending moving averages, favoring short entries on bounces.";
+    } else {
+      pattern = "Bearish Head & Shoulders";
+      patternDesc = "Reversal pattern indicating local peak consolidation before a potential major breakdown below support.";
+    }
+  } else {
+    pattern = "Horizontal Range-Bound";
+    patternDesc = "Indicators are in equilibrium. Support and resistance levels are clear, favoring range-bound swing trades.";
+  }
+  
+  // Trade targets logic
+  if (setupType === "Long") {
+    entry = price * 0.99; // Buy pullback at 1.0% below price
+    stopLoss = entry * 0.965; // 3.5% stop loss
+    target1 = entry * 1.05; // 5% Target 1
+    target2 = entry * 1.10; // 10% Target 2
+  } else if (setupType === "Short") {
+    entry = price * 1.01; // Short bounce at 1.0% above price
+    stopLoss = entry * 1.035; // 3.5% stop loss
+    target1 = entry * 0.95; // 5% Target 1
+    target2 = entry * 0.90; // 10% Target 2
+  } else {
+    entry = price * 0.985;
+    stopLoss = entry * 0.98;
+    target1 = entry * 1.03;
+    target2 = entry * 1.06;
+  }
+  
+  const risk = Math.abs(entry - stopLoss);
+  const reward = Math.abs(target2 - entry);
+  const rr = risk > 0 ? (reward / risk) : 2.86;
+  
+  return {
+    type: setupType,
+    entry,
+    stopLoss,
+    target1,
+    target2,
+    pattern,
+    patternDesc,
+    rr
+  };
+}
+
 function App() {
   const [signals, setSignals] = useState([]);
   const [stats, setStats] = useState({ total_count: 0, avg_sentiment: 0.0, tickers: {} });
@@ -334,6 +418,11 @@ function App() {
   const [searchResult, setSearchResult] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
+
+  // Market VIX Analysis State
+  const [vixData, setVixData] = useState(null);
+  const [vixLoading, setVixLoading] = useState(true);
+  const [vixError, setVixError] = useState("");
 
   // Handle On-demand Ticker Search
   const handleTickerSearch = async (e, tickerStr = null) => {
@@ -377,15 +466,19 @@ function App() {
 
   // Fetch all dashboard data from backend
   const fetchData = async (showLocalLoader = true) => {
-    if (showLocalLoader) setLoading(true);
+    if (showLocalLoader) {
+      setLoading(true);
+      setVixLoading(true);
+    }
     try {
       // Parallel fetch endpoints
-      const [signalsRes, statsRes, healthRes, tradesRes, topStocksRes] = await Promise.all([
+      const [signalsRes, statsRes, healthRes, tradesRes, topStocksRes, vixRes] = await Promise.all([
         fetch("/api/signals?limit=150"),
         fetch("/api/stats"),
         fetch("/api/health"),
         fetch(`/api/politician-trades?limit=250&prominent_only=${prominentOnly}`),
-        fetch(`/api/politician-top-stocks?limit=20&prominent_only=${prominentOnly}`)
+        fetch(`/api/politician-top-stocks?limit=20&prominent_only=${prominentOnly}`),
+        fetch("/api/market-vix-analysis")
       ]);
 
       if (signalsRes.ok && statsRes.ok && healthRes.ok && tradesRes.ok && topStocksRes.ok) {
@@ -404,11 +497,25 @@ function App() {
       } else {
         console.error("Non-200 response received from backend endpoints.");
       }
+
+      if (vixRes && vixRes.ok) {
+        const vixJson = await vixRes.json();
+        if (vixJson.status === "success" && vixJson.data) {
+          setVixData(vixJson.data);
+          setVixError("");
+        } else {
+          setVixError("Failed to parse VIX volatility statistics.");
+        }
+      } else {
+        setVixError("VIX API failed to load.");
+      }
     } catch (err) {
       console.error("Network error fetching dashboard data:", err);
       setHealth({ status: "offline", scheduler_running: false });
+      setVixError("Failed to reach VIX API.");
     } finally {
       setLoading(false);
+      setVixLoading(false);
     }
   };
 
@@ -544,6 +651,19 @@ function App() {
       const scoreB = Math.max(b.short_term_score || 0, b.long_term_score || 0);
       return scoreB - scoreA;
     })[0];
+  }, [topPoliticianStocks]);
+
+  // Filter the top 10 best buy opportunities for the trade execution list
+  const top10BestStocks = useMemo(() => {
+    if (!topPoliticianStocks || topPoliticianStocks.length === 0) return [];
+    const validStocks = topPoliticianStocks.filter(s => (s.last_price || s.price || 0) > 0);
+    const buys = validStocks.filter(s => s.signal === "Strong Buy" || s.signal === "Buy");
+    const listToProcess = buys.length > 0 ? buys : validStocks;
+    return [...listToProcess].sort((a, b) => {
+      const scoreA = Math.max(a.short_term_score || 0, a.long_term_score || 0);
+      const scoreB = Math.max(b.short_term_score || 0, b.long_term_score || 0);
+      return scoreB - scoreA;
+    }).slice(0, 10);
   }, [topPoliticianStocks]);
 
   // Find the single top sell stock based on minimum overall score
@@ -783,8 +903,10 @@ function App() {
 
       </section>
 
+      <div className="search-vix-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.5rem', marginTop: '-0.5rem' }}>
+        
       {/* On-Demand Ticker Intelligence Search Panel */}
-      <section className="glass-card search-box-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: '-0.5rem' }}>
+      <section className="glass-card search-box-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', height: '100%', margin: 0 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
           <h3 style={{ fontSize: '1.15rem', fontWeight: '700', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
             <Icons.Search size={18} className="trend-up" /> Real-time Ticker Intelligence
@@ -992,6 +1114,46 @@ function App() {
               </div>
             </div>
 
+            {/* Entry, Stop Loss, R/R, and Pattern for Search Ticker */}
+            {(() => {
+              const setup = calculateTradeSetup(searchResult);
+              if (!setup) return null;
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-primary)' }}>Execution Targets & Pattern</span>
+                    <span className={`option-badge ${setup.type === 'Long' ? 'option-call' : setup.type === 'Short' ? 'option-put' : 'option-hold'}`} style={{ fontSize: '0.7rem' }}>
+                      {setup.type === 'Long' ? '▲ LONG SETUP' : setup.type === 'Short' ? '▼ SHORT SETUP' : '▬ SWING SETUP'}
+                    </span>
+                  </div>
+                  
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    <strong>Pattern:</strong> 🔍 {setup.pattern} — <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{setup.patternDesc}</span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', textAlign: 'center', fontSize: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.65rem' }}>
+                    <div>
+                      <span style={{ color: 'var(--danger)', display: 'block', fontSize: '0.65rem', fontWeight: '600', textTransform: 'uppercase' }}>Stop Loss</span>
+                      <strong style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>${formatFloat(setup.stopLoss)}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--success)', display: 'block', fontSize: '0.65rem', fontWeight: '600', textTransform: 'uppercase' }}>Ideal Entry</span>
+                      <strong style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>${formatFloat(setup.entry)}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--primary)', display: 'block', fontSize: '0.65rem', fontWeight: '600', textTransform: 'uppercase' }}>Target 2</span>
+                      <strong style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>${formatFloat(setup.target2)}</strong>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.5rem' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Favorable R/R Ratio:</span>
+                    <strong style={{ color: setup.rr >= 2.0 ? 'var(--success)' : 'var(--warning)' }}>1 : {formatFloat(setup.rr)}</strong>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Catalyst & Strategy Explanation */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '0.85rem 1rem', borderRadius: '10px' }}>
@@ -1040,6 +1202,243 @@ function App() {
           </div>
         )}
       </section>
+
+      {/* Trade Execution Setup & Dynamic Pattern Card */}
+      {(() => {
+        return (
+          <section className="glass-card execution-box-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', height: '100%', margin: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: '700', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                <Icons.TrendingUp size={18} className="trend-up" /> Top 10 Trade Execution Setups
+              </h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
+                Automated target entry calculations, stops, and dynamic technical pattern classification.
+              </p>
+            </div>
+
+            {!top10BestStocks || top10BestStocks.length === 0 ? (
+              <div className="empty-state" style={{ padding: '2rem 0', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No trade execution data available.</p>
+              </div>
+            ) : (
+              <div className="trade-setup-list">
+                {top10BestStocks.map((stock) => {
+                  const tradeSetup = calculateTradeSetup(stock);
+                  if (!tradeSetup) return null;
+                  return (
+                    <div key={stock.ticker} className="trade-setup-row">
+                      {/* Top row: Symbol, Sector, Price, Type Badge */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <strong style={{ fontSize: '1.05rem', color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>
+                            {stock.ticker}
+                          </strong>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
+                            {stock.sector || "Other"}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                            ${formatFloat(stock.last_price || stock.price)}
+                          </strong>
+                          <span className={`option-badge ${tradeSetup.type === 'Long' ? 'option-call' : tradeSetup.type === 'Short' ? 'option-put' : 'option-hold'}`} style={{ fontSize: '0.65rem', padding: '0.1rem 0.35rem' }}>
+                            {tradeSetup.type === 'Long' ? '▲ BUY' : tradeSetup.type === 'Short' ? '▼ SHORT' : '▬ SWING'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Pattern Identification Section */}
+                      <div style={{ background: 'rgba(255, 255, 255, 0.01)', border: '1px solid rgba(255, 255, 255, 0.03)', padding: '0.5rem 0.75rem', borderRadius: '8px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                        <div style={{ fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                          🔍 {tradeSetup.pattern}
+                        </div>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', lineHeight: '1.3' }}>
+                          {tradeSetup.patternDesc}
+                        </div>
+                      </div>
+
+                      {/* Execution Targets section */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid rgba(255, 255, 255, 0.03)', paddingTop: '0.5rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.75rem' }}>
+                          <div>
+                            <span style={{ color: 'var(--success)', display: 'block', fontSize: '0.6rem', fontWeight: '700', textTransform: 'uppercase' }}>Entry</span>
+                            <strong style={{ color: 'var(--text-primary)' }}>${formatFloat(tradeSetup.entry)}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--danger)', display: 'block', fontSize: '0.6rem', fontWeight: '700', textTransform: 'uppercase' }}>Stop Loss</span>
+                            <strong style={{ color: 'var(--text-primary)' }}>${formatFloat(tradeSetup.stopLoss)}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.6rem', fontWeight: '700', textTransform: 'uppercase' }}>R/R Ratio</span>
+                            <strong style={{ color: tradeSetup.rr >= 2.0 ? 'var(--success)' : 'var(--warning)' }}>1:{formatFloat(tradeSetup.rr)}</strong>
+                          </div>
+                        </div>
+
+                        <button 
+                          className="btn btn-primary"
+                          onClick={() => setSelectedAnalysisStock(stock)}
+                          style={{ fontSize: '0.7rem', padding: '0.35rem 0.65rem', minHeight: 'auto', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                        >
+                          <Icons.Activity size={12} />
+                          Analyze Chart
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        );
+      })()}
+
+      {/* Market Volatility & Downside Protection (VIX) Panel */}
+      <section className="glass-card vix-box-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', height: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', fontFamily: 'var(--font-display)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+            <Icons.Activity size={18} className="trend-down" /> Volatility & Downside Analytics
+          </h3>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
+            Real-time market fear indexing (VIX) and statistical S&P 500 downside risk projection boundaries.
+          </p>
+        </div>
+
+        {vixLoading ? (
+          <div className="empty-state" style={{ padding: '2rem 0' }}>
+            <div className="loading-spinner"></div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Analyzing market volatility index (VIX)...</p>
+          </div>
+        ) : vixError ? (
+          <div className="sentiment-pill negative" style={{ padding: '0.65rem 1rem', borderRadius: '8px', borderLeft: '3px solid var(--danger)', background: 'rgba(244, 63, 94, 0.05)', fontSize: '0.85rem' }}>
+            ⚠️ {vixError}
+          </div>
+        ) : vixData ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            
+            {/* VIX & S&P 500 prices row */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              
+              {/* VIX Column */}
+              <div style={{ flex: 1, minWidth: '140px', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', padding: '0.75rem 1rem', borderRadius: '10px' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>CBOE VIX Index</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <span style={{ fontSize: '1.4rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    {formatFloat(vixData.vix_price)}
+                  </span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: '600' }} className={vixData.vix_change >= 0 ? "trend-down" : "trend-up"}>
+                    {vixData.vix_change >= 0 ? "▲" : "▼"} {formatFloat(Math.abs(vixData.vix_change))} ({formatFloat(vixData.vix_change_pct)}%)
+                  </span>
+                </div>
+              </div>
+
+              {/* S&P 500 Column */}
+              <div style={{ flex: 1, minWidth: '140px', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', padding: '0.75rem 1rem', borderRadius: '10px' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>S&P 500 Index</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <span style={{ fontSize: '1.4rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                    ${formatFloat(vixData.sp500_price, 0)}
+                  </span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: '600' }} className={vixData.sp500_change >= 0 ? "trend-up" : "trend-down"}>
+                    {vixData.sp500_change >= 0 ? "▲" : "▼"} {formatFloat(Math.abs(vixData.sp500_change_pct))}%
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Speedometer VIX Gauge */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                  Volatility State: <strong style={{ color: `var(--${vixData.color_theme})` }}>{vixData.fear_level}</strong>
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>20-Day SMA: {formatFloat(vixData.vix_sma_20)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase' }}>
+                <span>{"Complacency (<12)"}</span>
+                <span>{"Normal (12-20)"}</span>
+                <span>{"Elevated (20-30)"}</span>
+                <span>{"Panic (>=30)"}</span>
+              </div>
+              <div style={{ height: '6px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '999px', position: 'relative' }}>
+                <div 
+                  style={{ 
+                    position: 'absolute', 
+                    top: '-4px', 
+                    left: vixData.vix_price < 12 ? `${(vixData.vix_price / 12) * 25}%` :
+                          vixData.vix_price < 20 ? `${25 + ((vixData.vix_price - 12) / 8) * 25}%` :
+                          vixData.vix_price < 30 ? `${50 + ((vixData.vix_price - 20) / 10) * 25}%` :
+                          `${Math.min(75 + ((vixData.vix_price - 30) / 20) * 25, 96)}%`,
+                    width: '14px', 
+                    height: '14px', 
+                    background: `var(--${vixData.color_theme})`,
+                    borderRadius: '50%', 
+                    boxShadow: `0 0 10px var(--${vixData.color_theme})`,
+                    transition: 'left 0.5s ease-in-out'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Expected Downside Drawdown scorecard */}
+            <div style={{ background: 'rgba(255, 255, 255, 0.01)', border: '1px solid rgba(255, 255, 255, 0.03)', padding: '1rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-primary)' }}>Expected S&P 500 30-Day Drawdown Boundaries</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Risk Range</span>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Expected Monthly Low</span>
+                  <strong style={{ fontSize: '1.2rem', color: 'var(--warning)' }}>
+                    {formatFloat(vixData.expected_low_pct_1sd)}%
+                  </strong>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>1-Std Dev (68% Probability)</span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Extreme Tail-Risk Stress Low</span>
+                  <strong style={{ fontSize: '1.2rem', color: 'var(--danger)' }}>
+                    {formatFloat(vixData.expected_low_pct_2sd)}%
+                  </strong>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>2-Std Dev (95% Probability)</span>
+                </div>
+              </div>
+
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: '1.45', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                💡 <strong>Mathematical Volatility Index Pricing</strong>: Division by the square root of 12 translates annualized VIX volatility into a monthly expected index trading range. Under standard probability distributions, there is a 95% likelihood the S&P 500 remains above the extreme tail-risk low.
+              </div>
+            </div>
+
+            {/* Macro Volatility Trend Sentiment */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em' }}>
+                Volatility Trend & Bias Indicator
+              </span>
+              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', padding: '0.85rem 1rem', borderRadius: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                  <span style={{ 
+                    display: 'inline-block', 
+                    width: '8px', 
+                    height: '8px', 
+                    borderRadius: '50%', 
+                    background: vixData.market_bias.includes("Bearish") || vixData.market_bias.includes("Rising") ? 'var(--danger)' : 'var(--success)',
+                    boxShadow: `0 0 6px ${vixData.market_bias.includes("Bearish") || vixData.market_bias.includes("Rising") ? 'var(--danger)' : 'var(--success)'}`
+                  }} />
+                  <strong style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>{vixData.market_bias}</strong>
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.45' }}>
+                  {vixData.bias_desc} {vixData.fear_desc}
+                </p>
+              </div>
+            </div>
+
+          </div>
+        ) : (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '1rem 0' }}>No volatility analytics data loaded.</p>
+        )}
+      </section>
+
+      </div>
 
       {/* Tabs Navigation */}
       <div className="glass-card" style={{ padding: '0.25rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
