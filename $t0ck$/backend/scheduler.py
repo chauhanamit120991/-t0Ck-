@@ -14,8 +14,10 @@ from database import (
     get_active_politician_tickers,
     prune_old_data,
     save_stock_analysis,
-    get_sector_for_ticker
+    get_sector_for_ticker,
+    save_economic_events
 )
+import os
 from gemini_client import analyze_sentiment
 
 # Configure logging
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Fallback base tickers to always track
 DEFAULT_TICKERS = [
     # Baseline & AI Giants
-    "AAPL", "TSLA", "MSFT", "NVDA", "GOOGL", "META", "AMZN",
+    "AAPL", "TSLA", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "PLTR",
     # Data Centers & AI Infrastructure
     "AVGO", "SMCI", "ANET", "VRT",
     # Nuclear Energy & AI Power
@@ -516,6 +518,75 @@ def analyze_ticker_on_demand(ticker_symbol: str) -> dict:
         "recommendation": recommendation,
         "last_updated": datetime.now().isoformat()
     }
+
+def fetch_and_process_calendar(source="fmp"):
+    """Fetches this week's economic events from the specified API source."""
+    import os
+    
+    if source == "fmp":
+        api_key = os.environ.get("FMP_API_KEY")
+        if not api_key:
+            logger.warning("FMP_API_KEY not found in .env. Falling back to ForexFactory feed.")
+            source = "forexfactory"
+        else:
+            url = f"https://financialmodelingprep.com/stable/economic-calendar?apikey={api_key}"
+            try:
+                logger.warning(f"Fetching economic calendar from FMP.")
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read().decode())
+                        if data and isinstance(data, list):
+                            events = []
+                            for item in data:
+                                events.append({
+                                    "event": str(item.get("event", "")),
+                                    "date": str(item.get("date", "")),
+                                    "country": str(item.get("country", "")),
+                                    "actual": str(item.get("actual", "")),
+                                    "estimate": str(item.get("estimate", "")),
+                                    "previous": str(item.get("previous", "")),
+                                    "impact": str(item.get("impact", "Low"))
+                                })
+                            save_economic_events(events, clear_existing=True)
+                            logger.info("Successfully fetched and saved economic calendar from FMP.")
+                            return
+            except Exception as e:
+                logger.error(f"Error fetching economic calendar from FMP: {e}")
+                logger.info("Falling back to ForexFactory feed.")
+                source = "forexfactory"
+                
+    if source == "forexfactory":
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        try:
+            logger.warning(f"Fetching economic calendar from ForexFactory.")
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    if data and isinstance(data, list):
+                        events = []
+                        for item in data:
+                            events.append({
+                                "event": item.get("title", ""),
+                                "date": item.get("date", ""),
+                                "country": item.get("country", ""),
+                                "actual": item.get("actual", ""),
+                                "estimate": item.get("forecast", ""),
+                                "previous": item.get("previous", ""),
+                                "impact": item.get("impact", "Low")
+                            })
+                        save_economic_events(events, clear_existing=True)
+                        logger.info("Successfully fetched and saved economic calendar from ForexFactory.")
+                        return
+        except Exception as e:
+            logger.error(f"Error fetching economic calendar from ForexFactory: {e}")
 
 class BackgroundScheduler:
     """Manages the background loop running every 10 minutes and updating politician trades."""

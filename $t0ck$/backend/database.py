@@ -58,6 +58,19 @@ def init_db():
                 last_updated TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS economic_calendar (
+                id TEXT PRIMARY KEY,
+                event TEXT NOT NULL,
+                date TEXT NOT NULL,
+                country TEXT,
+                actual TEXT,
+                previous TEXT,
+                estimate TEXT,
+                impact TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """)
         conn.commit()
     except Exception as e:
         print(f"Error initializing database: {e}")
@@ -118,6 +131,7 @@ def prune_old_data(news_days_limit: int = 7, trades_days_limit: int = 60):
         conn.execute("DELETE FROM politician_trades WHERE transaction_date < ?", (threshold_trades_date_str,))
         conn.execute("DELETE FROM signals WHERE timestamp < ?", (threshold_news_iso,))
         conn.execute("DELETE FROM stock_analysis WHERE last_updated < ?", (threshold_news_iso,))
+        conn.execute("DELETE FROM economic_calendar WHERE date < ?", (threshold_trades_date_str,))
         
         # Check if we have any real trades in the database (id not starting with 'mock')
         cursor = conn.execute("SELECT COUNT(*) FROM politician_trades WHERE id NOT LIKE 'mock%'")
@@ -885,5 +899,70 @@ def get_active_politician_tickers(limit: int = 10) -> List[str]:
     try:
         cursor = conn.execute(query, (threshold_date_str, limit_val))
         return [row['ticker'] for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def save_economic_events(events: List[Dict[str, Any]], clear_existing: bool = True) -> None:
+    """Saves economic calendar events into the database."""
+    init_db()
+    conn = get_db_connection()
+    try:
+        if clear_existing:
+            conn.execute("DELETE FROM economic_calendar")
+            
+        timestamp = datetime.now().isoformat()
+        
+        formatted_events = []
+        for e in events:
+            date_str = str(e.get("date", ""))
+            event_name = str(e.get("event", ""))
+            event_id = f"{date_str}_{event_name}".replace(" ", "_").replace(":", "")
+            formatted_events.append((
+                event_id,
+                event_name,
+                date_str,
+                str(e.get("country", "")),
+                str(e.get("actual", "")),
+                str(e.get("previous", "")),
+                str(e.get("estimate", "")),
+                str(e.get("impact", "")),
+                timestamp
+            ))
+            
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO economic_calendar (
+                id, event, date, country, actual, previous, estimate, impact, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            formatted_events
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Error saving economic events: {str(e)}")
+    finally:
+        conn.close()
+
+def get_economic_events() -> List[Dict[str, Any]]:
+    """Retrieves economic calendar events for the current week."""
+    init_db()
+    conn = get_db_connection()
+    try:
+        # Get events from 2 days ago up to 7 days ahead
+        start_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+        end_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        
+        cursor = conn.execute(
+            """
+            SELECT * FROM economic_calendar
+            WHERE date >= ? AND date <= ?
+            ORDER BY date ASC
+            """,
+            (start_date, end_date)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error retrieving economic events: {str(e)}")
+        return []
     finally:
         conn.close()
