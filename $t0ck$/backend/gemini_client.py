@@ -72,6 +72,8 @@ def analyze_sentiment(headline: str, ticker: str) -> Tuple[float, str]:
         Provide a concise, 1-sentence explanation of why you chose this score.
         """
 
+        logger.info(f"Gemini analysis started for {ticker}...")
+
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,

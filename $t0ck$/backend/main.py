@@ -205,6 +205,26 @@ async def get_stock_analysis_detail(ticker: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch stock analysis: {str(e)}")
 
+@app.post("/api/calendar/refresh")
+async def refresh_calendar(source: str = "fmp"):
+    """Forces an immediate pull from the live economic calendar API."""
+    try:
+        from scheduler import fetch_and_process_calendar
+        fetch_and_process_calendar(source)
+        return {"status": "success", "message": f"Calendar refreshed using {source}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh calendar: {str(e)}")
+
+@app.get("/api/calendar")
+async def get_calendar():
+    """Fetches the cached economic calendar events."""
+    try:
+        from database import get_economic_events
+        events = get_economic_events()
+        return {"status": "success", "data": events}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch economic calendar: {str(e)}")
+
 @app.get("/api/market-trends/trending")
 async def get_trending_tickers():
     """Fetches trending stock tickers from Yahoo Finance and downloads their details."""

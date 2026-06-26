@@ -2,6 +2,14 @@ const { useState, useEffect, useMemo } = React;
 
 // Custom UI Icons rendered as inline SVGs for security and zero-overhead performance
 const Icons = {
+  Calendar: ({ className, size = 18 }) => (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+      <line x1="16" y1="2" x2="16" y2="6"></line>
+      <line x1="8" y1="2" x2="8" y2="6"></line>
+      <line x1="3" y1="10" x2="21" y2="10"></line>
+    </svg>
+  ),
   TrendingUp: ({ className, size = 18 }) => (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
@@ -413,6 +421,11 @@ function App() {
   const [topGainers, setTopGainers] = useState([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
   
+  // Economic Calendar State
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarSource, setCalendarSource] = useState("fmp");
+  
   // On-demand Ticker Search State
   const [searchTicker, setSearchTicker] = useState("");
   const [searchResult, setSearchResult] = useState(null);
@@ -549,10 +562,29 @@ function App() {
     fetchData();
   }, [prominentOnly]);
 
-  // Fetch trends when trends tab is selected
+  // Fetch calendar events
+  const fetchCalendarData = async () => {
+    if (calendarEvents.length > 0) return;
+    setCalendarLoading(true);
+    try {
+      const res = await fetch("/api/calendar");
+      if (res.ok) {
+        const data = await res.json();
+        setCalendarEvents(data.data || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch calendar events:", err);
+    } finally {
+      setCalendarLoading(false);
+    }
+  };
+
+  // Fetch trends/calendar when their tab is selected
   useEffect(() => {
     if (activeTab === "trends") {
       fetchTrendsData();
+    } else if (activeTab === "calendar") {
+      fetchCalendarData();
     }
   }, [activeTab]);
 
@@ -577,6 +609,23 @@ function App() {
       console.error("Network error during manual refresh:", err);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  // Handle dedicated Calendar Refresh
+  const handleCalendarRefresh = async (sourceOverride) => {
+    setCalendarLoading(true);
+    const sourceToUse = typeof sourceOverride === 'string' ? sourceOverride : calendarSource;
+    try {
+      const res = await fetch(`/api/calendar/refresh?source=${sourceToUse}`, { method: "POST" });
+      if (res.ok) {
+        setCalendarEvents([]); // Clear to force reload
+        await fetchCalendarData();
+      }
+    } catch (err) {
+      console.error("Network error refreshing calendar:", err);
+    } finally {
+      setCalendarLoading(false);
     }
   };
 
@@ -1470,6 +1519,12 @@ function App() {
           >
             Yahoo Finance Trends
           </button>
+          <button 
+            className={`tab-btn ${activeTab === "calendar" ? "active" : ""}`}
+            onClick={() => setActiveTab("calendar")}
+          >
+            Economic Calendar
+          </button>
         </nav>
         
         {/* Prominent Politician Toggle */}
@@ -2211,6 +2266,94 @@ function App() {
                   </div>
                 </div>
 
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {activeTab === "calendar" && (
+        <>
+          <div className="tab-header" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div>
+              <h2 className="section-title"><Icons.Calendar size={20} /> Economic Events Calendar</h2>
+              <p className="section-subtitle">Upcoming macroeconomic releases and central bank announcements.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <select 
+                className="dropdown-select"
+                value={calendarSource}
+                onChange={(e) => {
+                  setCalendarSource(e.target.value);
+                  handleCalendarRefresh(e.target.value);
+                }}
+                disabled={calendarLoading}
+              >
+                <option value="fmp">Financial Modeling Prep (FMP)</option>
+                <option value="forexfactory">ForexFactory (Backup)</option>
+              </select>
+              <button className="btn btn-primary" onClick={handleCalendarRefresh} disabled={calendarLoading}>
+                <Icons.Refresh size={14} className={calendarLoading ? "spin" : ""} />
+                {calendarLoading ? "Fetching..." : "Refresh"}
+              </button>
+            </div>
+          </div>
+          <section className="glass-card" style={{ padding: '1.5rem' }}>
+            {calendarLoading && calendarEvents.length === 0 ? (
+              <p>Loading economic events...</p>
+            ) : calendarEvents.length === 0 ? (
+              <p>No economic events found for this week.</p>
+            ) : (
+              <div className="table-responsive" style={{ overflowX: 'auto', width: '100%' }}>
+                <table className="signals-table" style={{ width: '100%', minWidth: '800px' }}>
+                  <thead>
+                    <tr>
+                      <th>Date / Time</th>
+                      <th>Country</th>
+                      <th>Event</th>
+                      <th>Impact</th>
+                      <th style={{ textAlign: 'right' }}>Actual</th>
+                      <th style={{ textAlign: 'right' }}>Estimate</th>
+                      <th style={{ textAlign: 'right' }}>Previous</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {calendarEvents.map((evt, idx) => {
+                      const evtDate = new Date(evt.date);
+                      const isHigh = evt.impact === "High";
+                      const isMed = evt.impact === "Medium";
+                      return (
+                        <tr key={evt.id || idx}>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            <div style={{ fontWeight: '600', color: 'var(--text-primary)' }}>
+                              {evtDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                            </div>
+                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                              {evtDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </td>
+                          <td>
+                            <span className="badge" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+                              {evt.country}
+                            </span>
+                          </td>
+                          <td style={{ fontWeight: '500' }}>{evt.event}</td>
+                          <td>
+                            <span className="badge" style={{ 
+                              background: isHigh ? 'rgba(239,68,68,0.15)' : isMed ? 'rgba(245,158,11,0.15)' : 'var(--bg-tertiary)',
+                              color: isHigh ? 'var(--danger-color)' : isMed ? 'var(--warning-color)' : 'var(--text-secondary)'
+                            }}>
+                              {evt.impact || "Low"}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: '600' }}>{evt.actual || "-"}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{evt.estimate || "-"}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{evt.previous || "-"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
